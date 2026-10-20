@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -323,6 +324,25 @@ func getRide(w http.ResponseWriter, r *http.Request) {
 	writeProxyResult(w, status, data, err)
 }
 
+func listRides(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	params := url.Values{}
+	if u := q.Get("userId"); u != "" {
+		params.Set("userId", u)
+	}
+	if l := q.Get("limit"); l != "" {
+		params.Set("limit", l)
+	}
+	status, data, err := proxyJSON("ride-service", "GET", rideURL+"/internal/rides?"+params.Encode(), nil, true)
+	writeProxyResult(w, status, data, err)
+}
+
+func cancelRide(w http.ResponseWriter, r *http.Request) {
+	id := url.PathEscape(r.PathValue("id"))
+	status, data, err := proxyJSON("ride-service", "POST", rideURL+"/internal/rides/"+id+"/cancel", nil, false)
+	writeProxyResult(w, status, data, err)
+}
+
 func nearbyDrivers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.RawQuery
 	status, data, err := proxyJSON("driver-service", "GET", driverURL+"/v1/drivers/nearby?"+q, nil, true)
@@ -388,7 +408,9 @@ func main() {
 	mux.HandleFunc("GET /metrics", metrics)
 
 	mux.HandleFunc("POST /v1/rides", chaosMiddleware(createRide))
+	mux.HandleFunc("GET /v1/rides", chaosMiddleware(listRides))
 	mux.HandleFunc("GET /v1/rides/{id}", chaosMiddleware(getRide))
+	mux.HandleFunc("POST /v1/rides/{id}/cancel", chaosMiddleware(cancelRide))
 	mux.HandleFunc("GET /v1/drivers/nearby", chaosMiddleware(nearbyDrivers))
 	mux.HandleFunc("GET /v1/users/me", chaosMiddleware(usersMe))
 	mux.HandleFunc("POST /v1/auth/login", chaosMiddleware(authLogin))

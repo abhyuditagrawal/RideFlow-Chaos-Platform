@@ -37,6 +37,7 @@ driver_cb = CircuitBreaker()
 # in-memory store standing in for DynamoDB `rides` in local/dev; swap for a
 # boto3 DynamoDB client behind the same interface when running on AWS.
 RIDES: dict[str, dict] = {}
+MAX_RIDES = int(os.getenv("MAX_RIDES", "5000"))
 LAST_KNOWN_BASE_FARE = {"default": 55.0}
 
 client = httpx.AsyncClient(timeout=httpx.Timeout(connect=0.8, read=2.0, write=2.0, pool=2.0))
@@ -182,6 +183,10 @@ async def create_ride(req: RideRequest, response: Response):
         "createdAt": time.time(), "updatedAt": time.time(), "region": REGION,
     }
     RIDES[ride_id] = ride
+    # in-memory store: keep the newest MAX_RIDES so a long-running simulator
+    # can't grow it without bound (dicts keep insertion order)
+    while len(RIDES) > MAX_RIDES:
+        RIDES.pop(next(iter(RIDES)))
 
     match = await try_match(ride_id, req.pickup)
     if match:
@@ -196,6 +201,12 @@ async def create_ride(req: RideRequest, response: Response):
     asyncio.create_task(background_match_retry(ride_id))
     response.status_code = 202
     return ride
+
+
+@app.get("/internal/rides")
+def list_rides(userId: str | None = None, limit: int = 50):
+    rides = [r for r in RIDES.values() if userId is None or r["userId"] == userId]
+    return {"rides": list(reversed(rides))[: max(1, min(limit, 500))], "total": len(RIDES)}
 
 
 @app.get("/internal/rides/{ride_id}")

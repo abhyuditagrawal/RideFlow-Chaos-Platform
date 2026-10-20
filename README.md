@@ -14,16 +14,33 @@ Requires Docker + Docker Compose.
 make up          # builds and starts everything
 ```
 
-This starts:
+This starts 11 containers, including a built-in **traffic simulator** (riders
+booking rides plus a fleet of 30 drivers moving around Mumbai), so the
+platform has live load from the first minute.
 
 | Thing | URL |
 |---|---|
+| **Mission Control dashboard** (React) | http://localhost:5173 |
 | API (via api-gateway) | http://localhost:8080 |
-| **Mission Control dashboard** (overview / chaos / security / logs) | http://localhost:5173 |
 | Chaos injector control API | http://localhost:9000 |
 | Security attack simulator API | http://localhost:9001 |
 | Grafana (admin/admin, anonymous viewer enabled) | http://localhost:3001 |
 | Prometheus | http://localhost:9090 |
+
+The dashboard has seven pages:
+
+| Page | What it does |
+|---|---|
+| Mission Control | Live KPIs with sparklines, service topology (health, fault target, open breakers), traffic chart, security score, fleet map |
+| Ride App | Sign up / log in (JWT), book rides on a live map, watch them get matched, cancel; platform-wide ride feed |
+| Chaos Lab | Experiment catalogue, live run tracker (phases, MTTD/MTTR, metrics), emergency abort, kill switch, game-day scheduler, traffic simulator, MTTD/MTTR charts, run history |
+| Security Lab | Posture gauge, one-click full sweep, OWASP-mapped attack catalogue with fixes, findings explorer, history |
+| Observability | Steady-state check, throughput/latency charts (5/15/60 min), per-service RED metrics, live circuit breakers |
+| Reports | Overall grade, resilience + security scorecards, CSV/JSON export, print to PDF, clear history |
+| Architecture | Diagrams, request flow, self-healing layers, deployment, decisions |
+
+To work on the dashboard itself: `cd frontend && npm install && npm run dev`
+(http://localhost:5174, proxies to the running compose stack).
 
 Smoke test the API:
 
@@ -83,7 +100,8 @@ chaos-injector/     # fault injection + MTTD/MTTR measurement engine, dual backe
 security-injector/  # authorized attack simulator — auth brute-force, JWT tampering,
                     # injection fuzzing, IDOR/access-control probing, recon, DoS-pressure testing
 attacks/            # the 6 security attack definitions (mirrors experiments/)
-frontend/dist/      # Mission Control dashboard — overview/chaos/security/logs (static, no build step)
+frontend/           # Mission Control dashboard: React + Vite, served by nginx (compose) or Vercel
+api/                # Vercel serverless proxy (Node.js): auth, backend routing, SSRF guard
 infra/              # Terraform — VPC, EKS, Redis, DynamoDB, Route 53, per §7
 deploy/helm/        # umbrella Helm chart — Deployments/HPA/PDB/Ingress per §9.2
 observability/      # Prometheus recording/alert rules, Grafana provisioning

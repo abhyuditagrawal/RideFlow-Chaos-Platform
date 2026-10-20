@@ -1,0 +1,30 @@
+# E10 — Full ride-service outage (detection & recovery drill)
+# Unlike E1-E8, nothing absorbs this fault: every booking fails while it's
+# active. It exists to measure the platform's detection (MTTD) and recovery
+# (MTTR) end to end. Short window, and the error-rate abort is deliberately
+# disabled (threshold 1.0) because a 100% error rate is the expected effect.
+id: ride-service-outage
+description: Make every ride-service request fail for 30 seconds, then measure how fast the outage is detected and how fast the platform returns to steady state
+fault:
+  type: dependency_failure
+  selector:
+    namespace: rideflow
+    labelSelector: app=ride-service
+  params: {}
+steady_state:
+  - metric: sum(rate(http_requests_total{job="api-gateway",code=~"5.."}[1m]))
+           / sum(rate(http_requests_total{job="api-gateway"}[1m]))
+    operator: "<"
+    threshold: 0.01
+blast_radius:
+  max_pods_affected: 3
+  max_percent_of_replicas: 100
+  forbidden_namespaces: [kube-system, observability, chaos]
+duration: 30s
+abort_conditions:
+  - metric: error_rate
+    operator: ">"
+    threshold: 1.0
+    sustained_for: 15s
+hypothesis: Outage detected within 20s; steady state restored within 120s of injection
+runs_required: 5

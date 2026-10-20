@@ -180,14 +180,22 @@ func nearby(w http.ResponseWriter, r *http.Request) {
 	if radius == 0 {
 		radius = 5
 	}
-	results, err := rdb.GeoSearch(ctx, "drivers:available", &redis.GeoSearchQuery{
-		Longitude: lng, Latitude: lat, Radius: radius, RadiusUnit: "km", Sort: "ASC", Count: 20,
+	results, err := rdb.GeoSearchLocation(ctx, "drivers:available", &redis.GeoSearchLocationQuery{
+		GeoSearchQuery: redis.GeoSearchQuery{
+			Longitude: lng, Latitude: lat, Radius: radius, RadiusUnit: "km", Sort: "ASC", Count: 20,
+		},
+		WithCoord: true,
+		WithDist:  true,
 	}).Result()
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"drivers": results})
+	drivers := make([]map[string]any, 0, len(results))
+	for _, d := range results {
+		drivers = append(drivers, map[string]any{"id": d.Name, "lat": d.Latitude, "lng": d.Longitude, "distKm": d.Dist})
+	}
+	json.NewEncoder(w).Encode(map[string]any{"drivers": drivers})
 }
 
 func metrics(w http.ResponseWriter, r *http.Request) {

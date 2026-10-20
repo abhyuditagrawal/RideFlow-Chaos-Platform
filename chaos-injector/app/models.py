@@ -47,6 +47,8 @@ class ExperimentDefinition(BaseModel):
     blast_radius: BlastRadius = BlastRadius()
     duration: str = "120s"
     abort_conditions: list[AbortCondition] = [AbortCondition()]
+    hypothesis: str | None = None
+    runs_required: int = 1
 
 
 class RunResult(BaseModel):

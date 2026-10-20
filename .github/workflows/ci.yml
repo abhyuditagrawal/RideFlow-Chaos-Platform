@@ -37,6 +37,24 @@ jobs:
             echo "No Makefile found for ${{ matrix.service }} yet — skipping (per-service 'make test' target is expected once the service scaffold lands)."
           fi
 
+  frontend:
+    name: build (React dashboard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install and build
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Proxy syntax check
+        run: node --check api/proxy.js
+
   build-images:
     name: build (${{ matrix.service }})
     runs-on: ubuntu-latest

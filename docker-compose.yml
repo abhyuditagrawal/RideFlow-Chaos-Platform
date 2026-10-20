@@ -1,5 +1,3 @@
-version: "3.9"
-
 # RideFlow local dev stack — see docs/api/contracts.md for authoritative
 # ports, service names and env vars. Do not diverge from that file.
 
@@ -27,6 +25,7 @@ services:
     build: ./services/api-gateway
     image: rideflow/api-gateway:dev
     container_name: api-gateway
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
@@ -54,6 +53,7 @@ services:
     build: ./services/user-service
     image: rideflow/user-service:dev
     container_name: user-service
+    restart: unless-stopped
     ports:
       - "8081:8081"
     environment:
@@ -71,6 +71,7 @@ services:
     build: ./services/ride-service
     image: rideflow/ride-service:dev
     container_name: ride-service
+    restart: unless-stopped
     ports:
       - "8082:8082"
     environment:
@@ -90,6 +91,7 @@ services:
     build: ./services/driver-service
     image: rideflow/driver-service:dev
     container_name: driver-service
+    restart: unless-stopped
     ports:
       - "8083:8083"
     environment:
@@ -106,6 +108,7 @@ services:
     build: ./services/pricing-service
     image: rideflow/pricing-service:dev
     container_name: pricing-service
+    restart: unless-stopped
     ports:
       - "8084:8084"
     environment:
@@ -126,6 +129,7 @@ services:
     build: ./chaos-injector
     image: rideflow/chaos-injector:dev
     container_name: chaos-injector
+    restart: unless-stopped
     ports:
       - "9000:9000"
     environment:
@@ -144,6 +148,10 @@ services:
       RIDE_SERVICE_URL: http://ride-service:8082
       DRIVER_SERVICE_URL: http://driver-service:8083
       PRICING_SERVICE_URL: http://pricing-service:8084
+      # built-in traffic + driver fleet so experiments always have load to measure
+      SIMULATOR_AUTOSTART: "true"
+      SIMULATOR_RPS: "4"
+      SIMULATOR_DRIVERS: "30"
     volumes:
       - ./experiments:/app/experiments:ro
       - chaos-state:/tmp/chaos-state
@@ -165,6 +173,7 @@ services:
     build: ./security-injector
     image: rideflow/security-injector:dev
     container_name: security-injector
+    restart: unless-stopped
     ports:
       - "9001:9001"
     environment:
@@ -193,6 +202,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    restart: unless-stopped
     # no host port published: another project's redis already owns 6379 on
     # this machine, and driver-service only needs in-network access anyway
     healthcheck:
@@ -206,6 +216,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
+    restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
@@ -231,6 +242,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
+    restart: unless-stopped
     ports:
       # host 3000 is commonly taken by other local projects; Grafana still
       # listens on 3000 inside the container/network either way
@@ -265,17 +277,21 @@ services:
   # ---------------------------------------------------------------------
   # Dashboard (frontend static files, built separately)
   # ---------------------------------------------------------------------
+  # React dashboard: built in the image, served by nginx, which also proxies
+  # /api/* to the injectors and gateway (frontend/nginx.conf)
   dashboard:
-    image: nginx:alpine
+    build: ./frontend
+    image: rideflow/dashboard:dev
     container_name: dashboard
+    restart: unless-stopped
     ports:
       - "5173:80"
-    volumes:
-      # bind mount so this works once the frontend team's build lands here;
-      # frontend/dist is built by `npm run build` in frontend/
-      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - chaos-injector
+      - security-injector
+      - api-gateway
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
       interval: 10s
       timeout: 3s
       retries: 3

@@ -1,3 +1,4 @@
+import asyncio
 import glob
 import logging
 import os
@@ -73,16 +74,29 @@ async def run_attack(attack_id: str):
     defn = ATTACKS.get(attack_id)
     if not defn:
         raise HTTPException(404, f"unknown attack {attack_id}")
+    # Shielded so a caller hanging up (the Vercel proxy answers after ~20s)
+    # doesn't cancel the attack midway.
+    task = asyncio.ensure_future(engine.run_attack(defn))
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
     try:
-        run = await engine.run_attack(defn)
+        run = await asyncio.shield(task)
     except SafetyError as e:
         raise HTTPException(409, str(e))
     return run.model_dump()
 
 
+_running_tasks: set = set()
+
+
 @app.get("/runs")
 def list_runs():
     return [r.model_dump() for r in engine.list_runs()]
+
+
+@app.delete("/runs")
+def clear_runs():
+    return {"removed": engine.clear_runs()}
 
 
 @app.get("/runs/{run_id}")

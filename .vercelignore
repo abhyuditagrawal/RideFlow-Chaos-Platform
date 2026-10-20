@@ -1,6 +1,8 @@
-# Vercel only serves the dashboard (frontend/dist) and the api/ proxy;
+# Vercel builds the React dashboard (frontend/) and runs the api/ proxy;
 # everything else is the backend, which runs elsewhere (see DEPLOY-VERCEL.md).
 /*
 !/api
 !/frontend
 !/vercel.json
+/frontend/node_modules
+/frontend/dist

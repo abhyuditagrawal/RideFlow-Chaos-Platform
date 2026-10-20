@@ -7,6 +7,7 @@ ValidateHypothesis -> CheckBlastRadius -> InjectFault -> RecordT0 -> Monitor
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -78,6 +79,14 @@ class ChaosEngine:
     def _save_runs(self):
         RUNS_FILE.write_text(json.dumps({k: v.model_dump() for k, v in self._runs.items()}))
 
+    def clear_runs(self) -> int:
+        """Forget finished runs (e.g. before a demo); an active run is kept."""
+        keep = {k: v for k, v in self._runs.items() if self._active_run is not None and k == self._active_run.runId}
+        removed = len(self._runs) - len(keep)
+        self._runs = keep
+        self._save_runs()
+        return removed
+
     def record_active_fault(self, run_id: str, experiment_id: str):
         ACTIVE_FAULT_FILE.write_text(json.dumps({"runId": run_id, "experimentId": experiment_id, "t0": time.time()}))
 
@@ -113,6 +122,10 @@ class ChaosEngine:
             except Exception as e:
                 logger.warning("prometheus query failed (%s) — treating as unmet", e)
                 return False, cond.metric
+            if math.isnan(value):
+                # 0/0 rates and empty histograms come back as NaN when there's
+                # no traffic; say so instead of reporting a mystery breach
+                return False, f"{cond.metric} (no data: is there traffic?)"
             if not compare(value, cond.operator, cond.threshold):
                 return False, cond.metric
         return True, None
@@ -216,17 +229,27 @@ class ChaosEngine:
                 run.status, run.result = "aborted", "fail"
                 return run
 
-            # MeasureRecovery
-            recovered_at = await self._measure_recovery(exp, t0)
-            if recovered_at is not None:
-                run.tRecover = recovered_at
-                run.mttrSeconds = recovered_at - t0
-                log.append(f"RECOVERED at +{run.mttrSeconds:.1f}s")
+            # MeasureRecovery. Measuring only after the revert would make MTTR
+            # at least the fault duration even when nothing broke, or when
+            # the system healed itself (e.g. a restarted container) mid-fault.
+            if run.tDetect is None:
+                log.append("NO IMPACT: steady state held for the whole fault window (no MTTD/MTTR to measure)")
+                recovered = True
+            elif run.tRecover is not None:
+                log.append(f"RECOVERED during the fault at +{run.mttrSeconds:.1f}s (self-healed before revert)")
+                recovered = True
             else:
-                log.append("did NOT recover within timeout")
+                recovered_at = await self._measure_recovery(exp, t0)
+                if recovered_at is not None:
+                    run.tRecover = recovered_at
+                    run.mttrSeconds = recovered_at - t0
+                    log.append(f"RECOVERED after revert at +{run.mttrSeconds:.1f}s")
+                else:
+                    log.append("did NOT recover within timeout")
+                recovered = recovered_at is not None
 
             run.status = "aborted" if aborted else "pass"
-            run.result = "fail" if (aborted or run.mttrSeconds is None) else "pass"
+            run.result = "fail" if (aborted or not recovered) else "pass"
             await self.post_annotation(f"chaos:{exp.id} RECOVERED mttr={run.mttrSeconds}", ["chaos", "recovery"])
             return run
         except Exception as e:
@@ -284,10 +307,11 @@ class ChaosEngine:
             return await self.backend.revert_region_failure()
         return "no-op"
 
-    async def _monitor(self, exp: ExperimentDefinition, run: RunResult, duration_s: float) -> bool:
+    async def _monitor(self, exp: ExperimentDefinition, run: RunResult, duration_s: float, stable_for: float = 30) -> bool:
         start = time.time()
         detected = False
         breach_since: float | None = None
+        stable_since: float | None = None
         while time.time() - start < duration_s:
             holds, failing = await self.steady_state_holds(exp.steady_state)
             if not holds and not detected:
@@ -295,6 +319,16 @@ class ChaosEngine:
                 run.mttdSeconds = run.tDetect - run.t0
                 run.log.append(f"t_detect=+{run.mttdSeconds:.1f}s steady state breached ({failing})")
                 detected = True
+            # self-healing while the fault is still active (same stability
+            # rule as _measure_recovery: steady for stable_for seconds)
+            if detected and run.tRecover is None:
+                if holds:
+                    stable_since = stable_since or time.time()
+                    if time.time() - stable_since >= stable_for:
+                        run.tRecover = stable_since
+                        run.mttrSeconds = stable_since - run.t0
+                else:
+                    stable_since = None
             for cond in exp.abort_conditions:
                 try:
                     r = await self._http.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": "rideflow:error_rate"})
